@@ -1,9 +1,13 @@
 package ui
 
-import "github.com/charmbracelet/lipgloss"
+import (
+	"github.com/charmbracelet/lipgloss"
 
-// Catppuccin Mocha, shared visually with eod and svntui.
-const (
+	"merger/internal/theme"
+)
+
+// Catppuccin Mocha fallback, shared visually with eod and svntui.
+var (
 	moBase     = "#1e1e2e"
 	moSurface0 = "#313244"
 	moSurface1 = "#45475a"
@@ -23,28 +27,59 @@ const (
 )
 
 var (
-	styleLogo     = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(moMauve))
-	styleTitle    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(moLavender))
-	styleText     = lipgloss.NewStyle().Foreground(lipgloss.Color(moText))
-	styleMuted    = lipgloss.NewStyle().Foreground(lipgloss.Color(moOverlay0))
-	styleSubtle   = lipgloss.NewStyle().Foreground(lipgloss.Color(moOverlay1))
-	styleAdded    = lipgloss.NewStyle().Foreground(lipgloss.Color(moGreen))
-	styleDeleted  = lipgloss.NewStyle().Foreground(lipgloss.Color(moRed))
-	styleModified = lipgloss.NewStyle().Foreground(lipgloss.Color(moYellow))
-	styleConflict = lipgloss.NewStyle().Foreground(lipgloss.Color(moRed)).Bold(true)
-	styleSuccess  = lipgloss.NewStyle().Foreground(lipgloss.Color(moGreen)).Bold(true)
-	styleWarning  = lipgloss.NewStyle().Foreground(lipgloss.Color(moPeach)).Bold(true)
-	styleError    = lipgloss.NewStyle().Foreground(lipgloss.Color(moRed)).Bold(true)
-	styleKey      = lipgloss.NewStyle().Foreground(lipgloss.Color(moMauve)).Bold(true)
-	styleFocus    = lipgloss.NewStyle().Background(lipgloss.Color(moSurface1)).Foreground(lipgloss.Color(moLavender)).Bold(true)
-	styleCursor   = lipgloss.NewStyle().Background(lipgloss.Color(moLavender)).Foreground(lipgloss.Color(moBase)).Bold(true)
-	styleSelected = lipgloss.NewStyle().Background(lipgloss.Color(moSurface0))
+	styleLogo     lipgloss.Style
+	styleTitle    lipgloss.Style
+	styleText     lipgloss.Style
+	styleMuted    lipgloss.Style
+	styleSubtle   lipgloss.Style
+	styleAdded    lipgloss.Style
+	styleDeleted  lipgloss.Style
+	styleModified lipgloss.Style
+	styleConflict lipgloss.Style
+	styleSuccess  lipgloss.Style
+	styleWarning  lipgloss.Style
+	styleError    lipgloss.Style
+	styleKey      lipgloss.Style
+	styleFocus    lipgloss.Style
+	styleCursor   lipgloss.Style
+	styleSelected lipgloss.Style
 	// The scrollbar sits in its own column beside the change map so the file
 	// position stays legible even where the map is solid with changes.
-	styleScrollTrack = lipgloss.NewStyle().Foreground(lipgloss.Color(moSurface1))
-	styleScrollThumb = lipgloss.NewStyle().Foreground(lipgloss.Color(moLavender)).Bold(true)
-	styleBorder      = lipgloss.NewStyle().Border(lipgloss.NormalBorder()).BorderForeground(lipgloss.Color(moSurface1))
+	styleScrollTrack lipgloss.Style
+	styleScrollThumb lipgloss.Style
+	styleBorder      lipgloss.Style
 )
+
+func init() { applyTheme(theme.Current()) }
+
+func applyTheme(p theme.Palette) {
+	moBase, moSurface0, moSurface1 = string(p.Base), string(p.Surface0), string(p.Surface1)
+	moOverlay0, moOverlay1 = string(p.Overlay0), string(p.Overlay1)
+	moSubtext0, moText = string(p.Subtext0), string(p.Text)
+	moLavender, moBlue, moSapphire = string(p.Lavender), string(p.Blue), string(p.Sapphire)
+	moTeal, moGreen, moYellow = string(p.Teal), string(p.Green), string(p.Yellow)
+	moPeach, moRed, moMauve = string(p.Peach), string(p.Red), string(p.Mauve)
+
+	styleLogo = lipgloss.NewStyle().Bold(true).Foreground(p.Mauve)
+	styleTitle = lipgloss.NewStyle().Bold(true).Foreground(p.Lavender)
+	styleText = lipgloss.NewStyle().Foreground(p.Text)
+	styleMuted = lipgloss.NewStyle().Foreground(p.Overlay0)
+	styleSubtle = lipgloss.NewStyle().Foreground(p.Overlay1)
+	styleAdded = lipgloss.NewStyle().Foreground(p.Green)
+	styleDeleted = lipgloss.NewStyle().Foreground(p.Red)
+	styleModified = lipgloss.NewStyle().Foreground(p.Yellow)
+	styleConflict = lipgloss.NewStyle().Foreground(p.Red).Bold(true)
+	styleSuccess = lipgloss.NewStyle().Foreground(p.Green).Bold(true)
+	styleWarning = lipgloss.NewStyle().Foreground(p.Peach).Bold(true)
+	styleError = lipgloss.NewStyle().Foreground(p.Red).Bold(true)
+	styleKey = lipgloss.NewStyle().Foreground(p.Mauve).Bold(true)
+	styleFocus = lipgloss.NewStyle().Background(p.Surface1).Foreground(p.Lavender).Bold(true)
+	styleCursor = lipgloss.NewStyle().Background(p.Mauve).Foreground(p.OnAccent).Bold(true)
+	styleSelected = lipgloss.NewStyle().Background(p.Surface0)
+	styleScrollTrack = lipgloss.NewStyle().Foreground(p.Surface1)
+	styleScrollThumb = lipgloss.NewStyle().Foreground(p.Lavender).Bold(true)
+	styleBorder = lipgloss.NewStyle().Border(lipgloss.NormalBorder()).BorderForeground(p.Surface1)
+}
 
 func hint(key, description string) string {
 	return styleKey.Render(key) + styleMuted.Render(":"+description)

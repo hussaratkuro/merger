@@ -10,6 +10,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"merger/internal/core"
+	"merger/internal/theme"
 )
 
 type screen uint8
@@ -138,16 +139,18 @@ func New(config Config) *App {
 }
 
 func (a *App) Init() tea.Cmd {
+	var initial tea.Cmd
 	switch a.config.Mode {
 	case ModePicker:
-		return loadBrowserCmd(a.browserPath, a.browserShowHidden)
+		initial = loadBrowserCmd(a.browserPath, a.browserShowHidden)
 	case ModeDirectory:
-		return loadDirectoryCmd(a.dirLeft, a.dirRight)
+		initial = loadDirectoryCmd(a.dirLeft, a.dirRight)
 	case ModeMerge:
-		return loadMergeCmd(a.config)
+		initial = loadMergeCmd(a.config)
 	default:
-		return loadCompareCmd(a.config.Left, a.config.Right, true, true, false)
+		initial = loadCompareCmd(a.config.Left, a.config.Right, true, true, false)
 	}
+	return tea.Batch(initial, theme.Watch())
 }
 
 func (a *App) SuccessfulOutput() bool {
@@ -250,6 +253,10 @@ func loadMergeCmd(config Config) tea.Cmd {
 
 func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case theme.ChangedMsg:
+		applyTheme(msg.Palette)
+		return a, theme.Watch()
+
 	case tea.WindowSizeMsg:
 		a.width, a.height = msg.Width, msg.Height
 		return a, nil

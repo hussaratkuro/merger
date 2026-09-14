@@ -1,8 +1,9 @@
 # merger
 
-`merger` is a keyboard-first Catppuccin Mocha diff, merge, and directory
-comparison TUI written in Go. It is a standalone companion to `svntui`, but it
-also works directly from a shell.
+`merger` is a keyboard-first diff, merge, and directory comparison TUI written
+in Go. It follows the active HyDE/Wallbash palette, with Catppuccin Mocha as a
+fallback. It is a standalone companion to `svntui`, but it also works directly
+from a shell.
 
 ## Build and install
 
@@ -58,8 +59,8 @@ merger --mine mine.txt --base base.txt --theirs theirs.txt --output result.txt
 ## File comparison
 
 - The complete files stay available; unchanged sections are not collapsed.
-- Added, deleted, modified, and conflicting regions use the Catppuccin
-  green/red/yellow/red convention.
+- Added, deleted, modified, and conflicting regions use distinct semantic
+  shades from the active palette.
 - `Alt+Up` and `Alt+Down` select the previous or next change.
 - `Alt+Right` pushes the selected left change to the right; `Alt+Left` pushes
   right to left, matching Meld's arrow direction.
