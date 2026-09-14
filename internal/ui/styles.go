@@ -53,22 +53,29 @@ var (
 func init() { applyTheme(theme.Current()) }
 
 func applyTheme(p theme.Palette) {
+	diff, appearance := resolveDiffPalette(p)
 	moBase, moSurface0, moSurface1 = string(p.Base), string(p.Surface0), string(p.Surface1)
 	moOverlay0, moOverlay1 = string(p.Overlay0), string(p.Overlay1)
 	moSubtext0, moText = string(p.Subtext0), string(p.Text)
 	moLavender, moBlue, moSapphire = string(p.Lavender), string(p.Blue), string(p.Sapphire)
-	moTeal, moGreen, moYellow = string(p.Teal), string(p.Green), string(p.Yellow)
-	moPeach, moRed, moMauve = string(p.Peach), string(p.Red), string(p.Mauve)
+	moTeal, moGreen, moYellow = string(p.Teal), string(diff.added), string(diff.modified)
+	moPeach, moRed, moMauve = string(p.Peach), string(diff.deleted), string(p.Mauve)
 
 	styleLogo = lipgloss.NewStyle().Bold(true).Foreground(p.Mauve)
 	styleTitle = lipgloss.NewStyle().Bold(true).Foreground(p.Lavender)
 	styleText = lipgloss.NewStyle().Foreground(p.Text)
 	styleMuted = lipgloss.NewStyle().Foreground(p.Overlay0)
 	styleSubtle = lipgloss.NewStyle().Foreground(p.Overlay1)
-	styleAdded = lipgloss.NewStyle().Foreground(p.Green)
-	styleDeleted = lipgloss.NewStyle().Foreground(p.Red)
-	styleModified = lipgloss.NewStyle().Foreground(p.Yellow)
-	styleConflict = lipgloss.NewStyle().Foreground(p.Red).Bold(true)
+	styleAdded = lipgloss.NewStyle().Foreground(diff.added)
+	styleDeleted = lipgloss.NewStyle().Foreground(diff.deleted)
+	styleModified = lipgloss.NewStyle().Foreground(diff.modified)
+	styleConflict = lipgloss.NewStyle().Foreground(diff.conflict).Bold(true)
+	if appearance == diffAppearanceMono {
+		styleAdded = styleAdded.Bold(true)
+		styleDeleted = styleDeleted.Strikethrough(true)
+		styleModified = styleModified.Underline(true)
+		styleConflict = styleConflict.Underline(true)
+	}
 	styleSuccess = lipgloss.NewStyle().Foreground(p.Green).Bold(true)
 	styleWarning = lipgloss.NewStyle().Foreground(p.Peach).Bold(true)
 	styleError = lipgloss.NewStyle().Foreground(p.Red).Bold(true)

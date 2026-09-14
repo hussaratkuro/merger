@@ -532,9 +532,8 @@ func stagedChangeStyle(kind core.ChangeKind) lipgloss.Style {
 }
 
 // renderOverview draws a whole-file change map and, in a dedicated column next
-// to it, a scrollbar whose thumb marks the visible part of the file. Keeping
-// the two apart means the position indicator stays readable even where the map
-// is solid with changes.
+// to it, a scrollbar whose thumb marks the visible part of the file. The map
+// uses ++, --, ~~ and !! so it remains meaningful without colour.
 func renderOverview(kinds []core.ChangeKind, height, offset, visible int) string {
 	if height <= 0 {
 		return ""
@@ -551,8 +550,15 @@ func renderOverview(kinds []core.ChangeKind, height, offset, visible int) string
 			kind = strongerKind(kind, kinds[i])
 		}
 		glyph := styleMuted.Render("··")
-		if kind != core.ChangeSame {
-			glyph = changeStyle(kind).Bold(true).Render("██")
+		switch kind {
+		case core.ChangeAdded:
+			glyph = styleAdded.Bold(true).Render("++")
+		case core.ChangeDeleted:
+			glyph = styleDeleted.Bold(true).Render("--")
+		case core.ChangeModified:
+			glyph = styleModified.Bold(true).Render("~~")
+		case core.ChangeConflict:
+			glyph = styleConflict.Bold(true).Render("!!")
 		}
 		bar := styleScrollTrack.Render("│")
 		if row >= thumbStart && row <= thumbEnd {

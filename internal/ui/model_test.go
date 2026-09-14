@@ -90,7 +90,10 @@ func TestOverviewSeparatesChangeMapFromScrollbar(t *testing.T) {
 		if len(runes) != 3 {
 			t.Fatalf("row %d = %q, want three cells", number, line)
 		}
-		if changeMap := string(runes[:2]); changeMap != "··" && changeMap != "██" {
+		changeMap := string(runes[:2])
+		switch changeMap {
+		case "··", "++", "--", "~~", "!!":
+		default:
 			t.Fatalf("row %d change map = %q", number, changeMap)
 		}
 		switch runes[2] {

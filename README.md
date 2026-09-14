@@ -5,6 +5,13 @@ in Go. It follows the active HyDE/Wallbash palette, with Catppuccin Mocha as a
 fallback. It is a standalone companion to `svntui`, but it also works directly
 from a shell.
 
+Diff colors default to `TUI_DIFF_THEME=auto`: when Wallbash provides a
+monochrome or insufficiently distinct semantic palette, only added, deleted,
+modified, and conflicting content uses the Catppuccin fallback colors. The
+rest of the interface remains on the active theme. The change map also uses
+`++`, `--`, `~~`, and `!!`, so it is readable without color. Available
+overrides are `wallbash`, `semantic`, and `mono`.
+
 ## Build and install
 
 ```bash
