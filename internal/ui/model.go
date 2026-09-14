@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -97,6 +98,11 @@ type App struct {
 	fileFocus           int
 	inlineCursors       [2]inlineCursor
 	horizontalOffset    [2]int
+	searchMode          bool
+	searchQuery         string
+	searchRow           int
+	ignoreWhitespace    bool
+	ignoreEOL           bool
 	compareUndo         []compareSnapshot
 	compareRedo         []compareSnapshot
 	compareFromDir      bool
@@ -121,12 +127,14 @@ type App struct {
 	saved      bool
 	cancelled  bool
 	saving     bool
+	commands   commandPalette
 }
 
 func New(config Config) *App {
 	a := &App{
 		config: config, screen: screenLoading, loadingLabel: "Opening comparison...",
 		showSame: true, dirFocus: 0, fileFocus: 0, changeCursor: -1, compareAnchorRow: -1,
+		searchRow: -1, ignoreWhitespace: config.IgnoreWhitespace, ignoreEOL: config.IgnoreEOL,
 	}
 	if config.Mode == ModeDirectory {
 		a.dirLeft, a.dirRight = config.Left, config.Right
@@ -371,6 +379,13 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.MouseMsg:
 		return a.updateMouse(msg)
 	case tea.KeyMsg:
+		if a.commands.open {
+			return a.updateCommandPalette(msg)
+		}
+		if (msg.String() == "ctrl+p" || msg.String() == "ctrl+shift+p") && a.screen != screenLoading && !a.saving && !a.searchMode {
+			a.openCommandPalette()
+			return a, nil
+		}
 		if msg.String() == "ctrl+c" {
 			if a.saving {
 				a.setStatus("Saving; wait for the write to finish before quitting.", false)
@@ -419,7 +434,11 @@ func (a *App) rebuildCompare() {
 		}
 		return
 	}
-	a.compareRows, a.compareChange = core.AlignDocuments(a.docs[0].Lines, a.docs[1].Lines)
+	normalize := func(line string) string { return line }
+	if a.ignoreWhitespace {
+		normalize = func(line string) string { return strings.Join(strings.Fields(line), " ") }
+	}
+	a.compareRows, a.compareChange = core.AlignDocumentsBy(a.docs[0].Lines, a.docs[1].Lines, normalize)
 	if a.docs[0].FinalNewline || a.docs[1].FinalNewline {
 		endRow := core.CompareRow{Change: -1}
 		if a.docs[0].FinalNewline {
@@ -430,7 +449,7 @@ func (a *App) rebuildCompare() {
 		}
 		a.compareRows = append(a.compareRows, endRow)
 	}
-	formatDifferent := documentFormatSignature(a.docs[0]) != documentFormatSignature(a.docs[1])
+	formatDifferent := !a.ignoreEOL && documentFormatSignature(a.docs[0]) != documentFormatSignature(a.docs[1])
 	if formatDifferent || a.stagedFormat[0] || a.stagedFormat[1] {
 		changeIndex := -1
 		kind := core.ChangeSame

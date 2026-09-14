@@ -66,3 +66,23 @@ func TestParseArgsRejectsOutputForTwoWayComparison(t *testing.T) {
 		t.Fatal("two-way comparison silently accepted --output")
 	}
 }
+
+func TestParseArgsReadOnlyLabelsAndIgnoreOptions(t *testing.T) {
+	directory := t.TempDir()
+	left, right := filepath.Join(directory, "base"), filepath.Join(directory, "working")
+	for _, path := range []string{left, right} {
+		if err := os.WriteFile(path, []byte("content\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cfg, err := ParseArgs([]string{
+		"--read-only", "--label-left", "BASE", "--label-right=WORKING",
+		"--ignore-whitespace", "--ignore-eol", left, right,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Mode != ModeCompare || !cfg.ReadOnly || !cfg.IgnoreWhitespace || !cfg.IgnoreEOL || cfg.LeftLabel != "BASE" || cfg.RightLabel != "WORKING" {
+		t.Fatalf("read-only config = %#v", cfg)
+	}
+}

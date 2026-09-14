@@ -45,6 +45,12 @@ Compare two files:
 merger path/to/left.txt path/to/right.txt
 ```
 
+Open a labelled comparison that cannot modify either input:
+
+```bash
+merger --read-only --label-left BASE --label-right WORKING base.txt working.txt
+```
+
 Compare two directories:
 
 ```bash
@@ -69,6 +75,9 @@ merger --mine mine.txt --base base.txt --theirs theirs.txt --output result.txt
 - Added, deleted, modified, and conflicting regions use distinct semantic
   shades from the active palette.
 - `Alt+Up` and `Alt+Down` select the previous or next change.
+- `Ctrl+F` searches both panes; in read-only mode `/` starts the same search.
+- `Alt+W` ignores whitespace-only differences and `Alt+E` ignores line-ending
+  differences. Both switches can be changed while the comparison is open.
 - `Alt+Right` pushes the selected left change to the right; `Alt+Left` pushes
   right to left, matching Meld's arrow direction.
 - A pushed change stays at its original screen location instead of selecting the
@@ -111,6 +120,11 @@ key types into the result, the change actions are all on `Alt`:
 - `Ctrl+Z` undoes and `Ctrl+Shift+Z` or `Ctrl+Y` redoes, covering typed edits and
   side choices alike
 - `F1` opens help; `F5` reloads all three inputs after a confirmation
+- `Ctrl+Shift+P` (or `Ctrl+P` where the terminal cannot distinguish Shift)
+  opens a fuzzy, screen-aware command palette
+- modified lines emphasize the exact changed character span, including in
+  monochrome themes; `Alt+S` toggles lightweight source syntax highlighting
+  (or start with `--syntax`)
 - `Ctrl+S`: save, only after every conflict is resolved
 - `Esc`: cancel, with a confirmation while the result is unsaved
 

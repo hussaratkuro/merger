@@ -37,6 +37,43 @@ func TestCompareAltArrowsPushInMeldDirection(t *testing.T) {
 	}
 }
 
+func TestReadOnlyComparisonCannotEditOrPush(t *testing.T) {
+	a := New(Config{Mode: ModeCompare, ReadOnly: true})
+	a.screen = screenCompare
+	a.docs = [2]core.Document{
+		{Label: "LEFT", Lines: []string{"left"}, EOL: "\n", Mode: 0o644},
+		{Label: "RIGHT", Lines: []string{"right"}, EOL: "\n", Mode: 0o644},
+	}
+	a.rebuildCompare()
+	a.updateCompare(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'X'}})
+	a.updateCompare(tea.KeyMsg{Type: tea.KeyRight, Alt: true})
+	if !slices.Equal(a.docs[0].Lines, []string{"left"}) || !slices.Equal(a.docs[1].Lines, []string{"right"}) || a.docs[0].Dirty || a.docs[1].Dirty {
+		t.Fatalf("read-only documents changed: %#v", a.docs)
+	}
+}
+
+func TestComparisonSearchWrapsAndHighlightsMatches(t *testing.T) {
+	a := New(Config{Mode: ModeCompare, ReadOnly: true})
+	a.screen = screenCompare
+	a.height = 12
+	a.docs = [2]core.Document{
+		{Lines: []string{"first needle", "middle", "last"}, EOL: "\n"},
+		{Lines: []string{"first", "middle needle", "last"}, EOL: "\n"},
+	}
+	a.rebuildCompare()
+	a.updateCompare(tea.KeyMsg{Type: tea.KeyCtrlF})
+	for _, character := range "needle" {
+		a.updateCompare(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{character}})
+	}
+	if !a.searchMode || a.searchRow != 0 {
+		t.Fatalf("first search match = mode %t row %d", a.searchMode, a.searchRow)
+	}
+	a.updateCompare(tea.KeyMsg{Type: tea.KeyEnter})
+	if a.searchRow != 1 {
+		t.Fatalf("next search match row = %d, want 1", a.searchRow)
+	}
+}
+
 func TestComparePushStaysAtAppliedDiffAndMarksTargetAsStaged(t *testing.T) {
 	base := make([]string, 30)
 	for index := range base {

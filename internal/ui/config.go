@@ -19,9 +19,15 @@ const (
 type Config struct {
 	Mode               Mode
 	Left, Right        string
+	LeftLabel          string
+	RightLabel         string
 	Mine, Base, Theirs string
 	Output             string
 	BrowseRoot         string
+	ReadOnly           bool
+	IgnoreWhitespace   bool
+	IgnoreEOL          bool
+	Syntax             bool
 }
 
 const Usage = `merger - Catppuccin terminal diff and merge tool
@@ -32,6 +38,9 @@ Usage:
 
   merger LEFT RIGHT
       Compare two files or two directories.
+
+  merger --read-only --label-left BASE --label-right WORKING LEFT RIGHT
+      Open a labelled comparison with all filesystem writes disabled.
 
   merger MINE BASE THEIRS --output RESULT
       Three-way merge compatible with Meld's SVN argument order.
@@ -53,6 +62,11 @@ Keys:
   Ctrl+Shift+Z/Y    redo
   Ctrl+S            save
   F1 / ?            help (F1 in the editable comparison and merge views)
+  Ctrl+F / /         search comparison text (/ is read-only mode only)
+  Alt+W              toggle ignoring whitespace-only differences
+  Alt+E              toggle line-ending differences
+  Alt+S              toggle lightweight syntax highlighting
+  Ctrl+Shift+P       fuzzy command palette (Ctrl+P fallback)
 `
 
 func ParseArgs(args []string) (Config, error) {
@@ -75,6 +89,30 @@ func ParseArgs(args []string) (Config, error) {
 		switch {
 		case arg == "-h" || arg == "--help" || arg == "help":
 			return Config{}, errHelp
+		case arg == "--read-only":
+			cfg.ReadOnly = true
+		case arg == "--ignore-whitespace":
+			cfg.IgnoreWhitespace = true
+		case arg == "--ignore-eol":
+			cfg.IgnoreEOL = true
+		case arg == "--syntax":
+			cfg.Syntax = true
+		case arg == "--label-left":
+			v, err := value(arg)
+			if err != nil {
+				return Config{}, err
+			}
+			cfg.LeftLabel = v
+		case strings.HasPrefix(arg, "--label-left="):
+			cfg.LeftLabel = strings.TrimPrefix(arg, "--label-left=")
+		case arg == "--label-right":
+			v, err := value(arg)
+			if err != nil {
+				return Config{}, err
+			}
+			cfg.RightLabel = v
+		case strings.HasPrefix(arg, "--label-right="):
+			cfg.RightLabel = strings.TrimPrefix(arg, "--label-right=")
 		case arg == "--mine":
 			v, err := value(arg)
 			if err != nil {
@@ -136,6 +174,9 @@ func ParseArgs(args []string) (Config, error) {
 	}
 
 	if cfg.Mode == ModeMerge {
+		if cfg.ReadOnly || cfg.LeftLabel != "" || cfg.RightLabel != "" || cfg.IgnoreWhitespace || cfg.IgnoreEOL || cfg.Syntax {
+			return Config{}, fmt.Errorf("read-only comparison options are not valid for a three-way merge")
+		}
 		if cfg.Output == "" {
 			cfg.Output = cfg.Mine
 		}
@@ -172,6 +213,12 @@ func ParseArgs(args []string) (Config, error) {
 	}
 	if leftInfo.IsDir() {
 		cfg.Mode = ModeDirectory
+	}
+	if cfg.LeftLabel == "" {
+		cfg.LeftLabel = "LEFT"
+	}
+	if cfg.RightLabel == "" {
+		cfg.RightLabel = "RIGHT"
 	}
 	return cfg, nil
 }

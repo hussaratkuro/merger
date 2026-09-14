@@ -110,16 +110,28 @@ func (a *App) updateDirectory(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		a.clearDirectoryQuery()
 		return a.openDirectoryEntry(entries[a.dirCursor])
 	case "alt+right":
+		if a.config.ReadOnly {
+			a.setStatus("Read-only comparison", false)
+			break
+		}
 		a.clearDirectoryQuery()
 		if len(entries) > 0 {
 			return a.confirmDirectoryCopy(entries[a.dirCursor], 1)
 		}
 	case "alt+left":
+		if a.config.ReadOnly {
+			a.setStatus("Read-only comparison", false)
+			break
+		}
 		a.clearDirectoryQuery()
 		if len(entries) > 0 {
 			return a.confirmDirectoryCopy(entries[a.dirCursor], -1)
 		}
 	case "alt+delete":
+		if a.config.ReadOnly {
+			a.setStatus("Read-only comparison", false)
+			break
+		}
 		a.clearDirectoryQuery()
 		if len(entries) > 0 {
 			return a.confirmDirectoryDelete(entries[a.dirCursor])

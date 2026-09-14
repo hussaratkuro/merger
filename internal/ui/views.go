@@ -16,6 +16,9 @@ func (a *App) View() string {
 	if a.width <= 0 || a.height <= 0 {
 		return "Loading merger..."
 	}
+	if a.commands.open {
+		return a.viewCommandPalette()
+	}
 	switch a.screen {
 	case screenLoading:
 		return a.viewLoading()
@@ -224,8 +227,8 @@ func (a *App) viewCompare() string {
 	leftWidth := cellSpace / 2
 	rightWidth := cellSpace - leftWidth
 
-	leftTitle := "LEFT  " + a.docs[0].Path
-	rightTitle := "RIGHT  " + a.docs[1].Path
+	leftTitle := a.config.LeftLabel + "  " + a.docs[0].Path
+	rightTitle := a.config.RightLabel + "  " + a.docs[1].Path
 	if a.docs[0].Dirty {
 		leftTitle += "  ●"
 	}
@@ -245,11 +248,12 @@ func (a *App) viewCompare() string {
 			continue
 		}
 		row := a.compareRows[rowIndex]
-		selected := row.Change >= 0 && row.Change == a.changeCursor
+		selected := rowIndex == a.searchRow || row.Change >= 0 && row.Change == a.changeCursor
 		leftStage, rightStage := a.stagedKindForRow(row)
 		leftCursor := a.cursorForCompareRow(0, rowIndex, row.LeftNo, row.Metadata)
 		rightCursor := a.cursorForCompareRow(1, rowIndex, row.RightNo, row.Metadata)
-		body.WriteString(renderCompareRow(row, numWidth, leftWidth, rightWidth, selected, leftStage, rightStage, leftCursor, rightCursor) + "\n")
+		body.WriteString(renderCompareRow(row, numWidth, leftWidth, rightWidth, selected, leftStage, rightStage,
+			leftCursor, rightCursor, a.config.Syntax, a.docs[0].Path, a.docs[1].Path) + "\n")
 	}
 	kinds := make([]core.ChangeKind, len(a.compareRows))
 	for i, row := range a.compareRows {
@@ -259,9 +263,14 @@ func (a *App) viewCompare() string {
 	overview := renderOverview(kinds, visible+1, a.rowOffset, visible)
 	content := lipgloss.JoinHorizontal(lipgloss.Top, body.String(), " ", overview)
 
-	return a.header("file compare") + "\n" + a.panel(content, visible+1) + "\n" +
-		a.footer(hint("type/click", "edit"), hint("arrows", "cursor"), hint("Alt+↑/↓", "change"), hint("Alt+←/→", "push"),
-			hint("Ctrl+Z", "undo"), hint("Ctrl+Shift+Z", "redo"), hint("Tab", "side"), hint("◆", "pending"), hint("Ctrl+S", "save"), hint("Esc", "back"), hint("F1", "help"))
+	options := []string{hint("arrows", "cursor"), hint("Alt+↑/↓", "change"), hint("Ctrl+F", "search"), hint("Alt+W/E", "ignore"), hint("Alt+S", "syntax")}
+	if !a.config.ReadOnly {
+		options = append(options, hint("type/click", "edit"), hint("Alt+←/→", "push"), hint("Ctrl+Z/Y", "undo/redo"), hint("Ctrl+S", "save"))
+	} else {
+		options = append(options, hint("mode", "read-only"))
+	}
+	options = append(options, hint("Tab", "side"), hint("Esc", "back"), hint("F1", "help"))
+	return a.header("file compare") + "\n" + a.panel(content, visible+1) + "\n" + a.footer(options...)
 }
 
 func renderPaneTitle(title string, width int, focused bool) string {
@@ -307,7 +316,7 @@ func (a *App) stagedKindForSide(side, lineNumber int) core.ChangeKind {
 	return core.ChangeSame
 }
 
-func renderCompareRow(row core.CompareRow, numWidth, leftWidth, rightWidth int, selected bool, leftStage, rightStage core.ChangeKind, leftCursor, rightCursor cellCursor) string {
+func renderCompareRow(row core.CompareRow, numWidth, leftWidth, rightWidth int, selected bool, leftStage, rightStage core.ChangeKind, leftCursor, rightCursor cellCursor, syntax bool, leftPath, rightPath string) string {
 	baseStyle := changeStyle(row.Kind)
 	if selected {
 		baseStyle = baseStyle.Background(lipgloss.Color(moSurface0)).Bold(true)
@@ -340,36 +349,62 @@ func renderCompareRow(row core.CompareRow, numWidth, leftWidth, rightWidth int, 
 		marker = "◆"
 		markerStyle = stagedChangeStyle(strongerKind(leftStage, rightStage))
 	}
-	return styleMuted.Render(leftNo+" │ ") + renderEditableCell(row.Left, leftWidth, leftStyle, leftCursor) +
+	leftHighlight, rightHighlight := inlineChangeRanges(row.Left, row.Right, row.Kind == core.ChangeModified)
+	return styleMuted.Render(leftNo+" │ ") + renderDecoratedCell(row.Left, leftWidth, leftStyle, leftCursor, leftHighlight, syntaxDecorations(row.Left, leftPath, syntax && row.Kind == core.ChangeSame)) +
 		styleMuted.Render(" │ ") + markerStyle.Render(marker) + styleMuted.Render(" │ ") +
-		styleMuted.Render(rightNo+" │ ") + renderEditableCell(row.Right, rightWidth, rightStyle, rightCursor)
+		styleMuted.Render(rightNo+" │ ") + renderDecoratedCell(row.Right, rightWidth, rightStyle, rightCursor, rightHighlight, syntaxDecorations(row.Right, rightPath, syntax && row.Kind == core.ChangeSame))
 }
 
 func renderEditableCell(value string, width int, textStyle lipgloss.Style, cursor cellCursor) string {
+	return renderDecoratedCell(value, width, textStyle, cursor, visualRange{}, nil)
+}
+
+type visualRange struct{ start, end int }
+
+type syntaxClass uint8
+
+const (
+	syntaxNone syntaxClass = iota
+	syntaxKeyword
+	syntaxString
+	syntaxNumber
+	syntaxComment
+)
+
+func renderDecoratedCell(value string, width int, textStyle lipgloss.Style, cursor cellCursor, highlight visualRange, syntax []syntaxClass) string {
 	expanded := expandTabs(value)
-	visible := ansi.Cut(expanded, cursor.Offset, cursor.Offset+width)
-	visible = padVisual(visible, width)
-	if !cursor.Show || width <= 0 {
-		return textStyle.Render(visible)
+	if width <= 0 {
+		return ""
 	}
-	cursorColumn := clamp(cursorVisualColumn(value, cursor.RuneColumn)-cursor.Offset, 0, width-1)
-	runes := []rune(visible)
+	cursorColumn := cursorVisualColumn(value, cursor.RuneColumn)
+	var styled strings.Builder
 	visual := 0
-	cursorIndex := len(runes)
-	for index, r := range runes {
-		if visual >= cursorColumn {
-			cursorIndex = index
-			break
+	for index, character := range []rune(expanded) {
+		cellWidth := max(1, lipgloss.Width(string(character)))
+		style := textStyle
+		if index < len(syntax) {
+			switch syntax[index] {
+			case syntaxKeyword:
+				style = style.Foreground(lipgloss.Color(moMauve)).Bold(true)
+			case syntaxString:
+				style = style.Foreground(lipgloss.Color(moGreen))
+			case syntaxNumber:
+				style = style.Foreground(lipgloss.Color(moPeach))
+			case syntaxComment:
+				style = style.Foreground(lipgloss.Color(moOverlay1)).Italic(true)
+			}
 		}
-		visual += max(1, lipgloss.Width(string(r)))
+		if visual < highlight.end && visual+cellWidth > highlight.start {
+			style = style.Background(lipgloss.Color(moSurface1)).Underline(true).Bold(true)
+		}
+		if cursor.Show && visual <= cursorColumn && cursorColumn < visual+cellWidth {
+			style = styleCursor
+		}
+		styled.WriteString(style.Render(string(character)))
+		visual += cellWidth
 	}
-	if cursorIndex >= len(runes) {
-		return textStyle.Render(visible)
-	}
-	before := string(runes[:cursorIndex])
-	cell := string(runes[cursorIndex])
-	after := string(runes[cursorIndex+1:])
-	return textStyle.Render(before) + styleCursor.Render(cell) + textStyle.Render(after)
+	visible := ansi.Cut(styled.String(), cursor.Offset, cursor.Offset+width)
+	return visible + textStyle.Render(strings.Repeat(" ", max(0, width-lipgloss.Width(visible))))
 }
 
 func (a *App) viewBinaryCompare() string {
@@ -480,6 +515,7 @@ func (a *App) viewHelp() string {
 		"  Typing, Enter, Backspace and Delete edit the focused file immediately\n" +
 		"  Tab changes sides; Ctrl+Z undoes; Ctrl+Shift+Z or Ctrl+Y redoes\n" +
 		"  F1 opens help; F5 reloads; Esc returns or quits\n\n" +
+		"  Ctrl+Shift+P / Ctrl+P opens the fuzzy command palette\n\n" +
 		styleTitle.Render("Directory compare") + "\n" +
 		"  Enter opens a collapsed directory or compares a file\n" +
 		"  Backspace moves both sides to their parent\n" +

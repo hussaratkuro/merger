@@ -118,7 +118,21 @@ type CompareChange struct {
 // AlignDocuments creates line-numbered side-by-side rows and source ranges for
 // Meld-compatible push-left/push-right operations.
 func AlignDocuments(left, right []string) ([]CompareRow, []CompareChange) {
-	edits := DiffEdits(left, right)
+	return AlignDocumentsBy(left, right, func(line string) string { return line })
+}
+
+// AlignDocumentsBy compares normalized line keys while retaining the original
+// text in the returned rows. It is used for options such as ignoring whitespace
+// without making copied or displayed content lossy.
+func AlignDocumentsBy(left, right []string, normalize func(string) string) ([]CompareRow, []CompareChange) {
+	leftKeys, rightKeys := make([]string, len(left)), make([]string, len(right))
+	for index, line := range left {
+		leftKeys[index] = normalize(line)
+	}
+	for index, line := range right {
+		rightKeys[index] = normalize(line)
+	}
+	edits := DiffEdits(leftKeys, rightKeys)
 	rows := make([]CompareRow, 0, max(len(left), len(right)))
 	changes := make([]CompareChange, 0, len(edits))
 	leftPos, rightPos := 0, 0
@@ -143,17 +157,18 @@ func AlignDocuments(left, right []string) ([]CompareRow, []CompareChange) {
 			RightStart: rightPos, RightEnd: rightPos + len(edit.NewLines),
 		}
 		removed := left[edit.BaseStart:edit.BaseEnd]
+		added := right[rightPos : rightPos+len(edit.NewLines)]
 		for i := range max(len(removed), len(edit.NewLines)) {
 			row := CompareRow{Change: changeIndex}
 			switch {
-			case i < len(removed) && i < len(edit.NewLines):
-				row.Left, row.Right = removed[i], edit.NewLines[i]
+			case i < len(removed) && i < len(added):
+				row.Left, row.Right = removed[i], added[i]
 				row.LeftNo, row.RightNo = edit.BaseStart+i+1, rightPos+i+1
 				row.Kind = ChangeModified
 			case i < len(removed):
 				row.Left, row.LeftNo, row.Kind = removed[i], edit.BaseStart+i+1, ChangeDeleted
 			default:
-				row.Right, row.RightNo, row.Kind = edit.NewLines[i], rightPos+i+1, ChangeAdded
+				row.Right, row.RightNo, row.Kind = added[i], rightPos+i+1, ChangeAdded
 			}
 			rows = append(rows, row)
 		}

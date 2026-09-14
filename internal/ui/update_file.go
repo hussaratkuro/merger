@@ -16,6 +16,10 @@ func (a *App) fileVisibleRows() int {
 
 func (a *App) updateCompare(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
+	if a.searchMode {
+		a.updateCompareSearch(msg)
+		return a, nil
+	}
 	if a.saving {
 		a.setStatus("Saving; please wait...", false)
 		return a, nil
@@ -65,6 +69,31 @@ func (a *App) updateCompare(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return a, tea.Quit
 	case "f1":
 		a.returnScreen, a.screen = screenCompare, screenHelp
+	case "ctrl+f":
+		a.searchMode = true
+		a.searchQuery = ""
+		a.searchRow = -1
+		a.setStatus("Search: type text · Enter next · Esc close", false)
+	case "/":
+		if a.config.ReadOnly {
+			a.searchMode = true
+			a.searchQuery = ""
+			a.searchRow = -1
+			a.setStatus("Search: type text · Enter next · Esc close", false)
+		} else {
+			a.insertInlineText("/")
+		}
+	case "alt+w":
+		a.ignoreWhitespace = !a.ignoreWhitespace
+		a.rebuildCompare()
+		a.setStatus(toggleStatus("Ignore whitespace", a.ignoreWhitespace), false)
+	case "alt+e":
+		a.ignoreEOL = !a.ignoreEOL
+		a.rebuildCompare()
+		a.setStatus(toggleStatus("Ignore line endings", a.ignoreEOL), false)
+	case "alt+s":
+		a.config.Syntax = !a.config.Syntax
+		a.setStatus(toggleStatus("Syntax highlighting", a.config.Syntax), false)
 	case "tab":
 		a.fileFocus = 1 - a.fileFocus
 		a.normalizeInlineCursor(a.fileFocus)
@@ -75,22 +104,48 @@ func (a *App) updateCompare(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "alt+down":
 		a.moveCompareChange(1)
 	case "alt+right":
+		if a.config.ReadOnly {
+			a.setStatus("Read-only comparison", false)
+			break
+		}
 		a.pushCompareChange(1)
 	case "alt+left":
+		if a.config.ReadOnly {
+			a.setStatus("Read-only comparison", false)
+			break
+		}
 		a.pushCompareChange(-1)
 	case "alt+delete":
+		if a.config.ReadOnly {
+			a.setStatus("Read-only comparison", false)
+			break
+		}
 		a.deleteFocusedChange()
 	case "enter":
-		a.insertInlineText("\n")
+		if !a.config.ReadOnly {
+			a.insertInlineText("\n")
+		}
 	case "backspace":
-		a.backspaceInline()
+		if !a.config.ReadOnly {
+			a.backspaceInline()
+		}
 	case "delete":
-		a.deleteInline()
+		if !a.config.ReadOnly {
+			a.deleteInline()
+		}
 	case "ctrl+z":
-		a.undoCompare()
+		if !a.config.ReadOnly {
+			a.undoCompare()
+		}
 	case "ctrl+shift+z", "ctrl+y":
-		a.redoCompare()
+		if !a.config.ReadOnly {
+			a.redoCompare()
+		}
 	case "ctrl+s":
+		if a.config.ReadOnly {
+			a.setStatus("Read-only comparison", false)
+			break
+		}
 		cmd := a.saveCompareCmd()
 		if cmd != nil {
 			a.saving = true
@@ -106,11 +161,79 @@ func (a *App) updateCompare(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return a, loadCompareCmd(a.docs[0].Path, a.docs[1].Path, pathExists(a.docs[0].Path), pathExists(a.docs[1].Path), a.compareFromDir)
 	}
 	if key == " " {
-		a.insertInlineText(" ")
-	} else if msg.Type == tea.KeyRunes && !msg.Alt {
+		if !a.config.ReadOnly {
+			a.insertInlineText(" ")
+		}
+	} else if msg.Type == tea.KeyRunes && !msg.Alt && !a.config.ReadOnly && key != "/" {
 		a.insertInlineText(string(msg.Runes))
 	}
 	return a, nil
+}
+
+func (a *App) updateCompareSearch(msg tea.KeyMsg) {
+	switch msg.String() {
+	case "esc":
+		a.searchMode = false
+		a.searchQuery = ""
+		a.searchRow = -1
+		a.setStatus("Search closed", false)
+	case "enter", "down":
+		a.findCompareMatch(1)
+	case "shift+enter", "up":
+		a.findCompareMatch(-1)
+	case "backspace":
+		if runes := []rune(a.searchQuery); len(runes) > 0 {
+			a.searchQuery = string(runes[:len(runes)-1])
+			a.searchRow = -1
+			a.findCompareMatch(1)
+		}
+	default:
+		if msg.Type == tea.KeyRunes && !msg.Alt {
+			a.searchQuery += string(msg.Runes)
+			a.searchRow = -1
+			a.findCompareMatch(1)
+		}
+	}
+}
+
+func (a *App) findCompareMatch(direction int) {
+	query := strings.ToLower(strings.TrimSpace(a.searchQuery))
+	if query == "" || len(a.compareRows) == 0 {
+		a.searchRow = -1
+		a.setStatus("Search: "+a.searchQuery, false)
+		return
+	}
+	start := a.searchRow
+	if start < 0 {
+		start = a.rowOffset
+		if direction < 0 {
+			start++
+		} else {
+			start--
+		}
+	}
+	for step := 1; step <= len(a.compareRows); step++ {
+		index := (start + direction*step) % len(a.compareRows)
+		if index < 0 {
+			index += len(a.compareRows)
+		}
+		row := a.compareRows[index]
+		if strings.Contains(strings.ToLower(row.Left), query) || strings.Contains(strings.ToLower(row.Right), query) {
+			a.searchRow = index
+			a.rowOffset = clamp(index-a.fileVisibleRows()/2, 0, max(0, len(a.compareRows)-a.fileVisibleRows()))
+			a.setStatus(fmt.Sprintf("Search %q · row %d", a.searchQuery, index+1), false)
+			return
+		}
+	}
+	a.searchRow = -1
+	a.setStatus("No match for "+fmt.Sprintf("%q", a.searchQuery), true)
+}
+
+func toggleStatus(label string, enabled bool) string {
+	if enabled {
+		return label + " enabled"
+	}
+	return label + " disabled"
 }
 
 func (a *App) scrollFileRows(delta, total int) {

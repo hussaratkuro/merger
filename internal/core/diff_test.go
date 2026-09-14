@@ -3,6 +3,7 @@ package core
 import (
 	"math/rand"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -88,6 +89,20 @@ func TestAlignDocumentsProvidesPushRanges(t *testing.T) {
 	if !slices.Equal(left[first.LeftStart:first.LeftEnd], []string{"left"}) ||
 		!slices.Equal(right[first.RightStart:first.RightEnd], []string{"right"}) {
 		t.Fatalf("first change ranges do not address source lines: %#v", first)
+	}
+}
+
+func TestAlignDocumentsByIgnoresWhitespaceButKeepsOriginalText(t *testing.T) {
+	left := []string{"same", "  indented value"}
+	right := []string{"same", "indented    value"}
+	rows, changes := AlignDocumentsBy(left, right, func(line string) string {
+		return strings.Join(strings.Fields(line), " ")
+	})
+	if len(changes) != 0 || len(rows) != 2 {
+		t.Fatalf("normalized alignment = %d rows, %d changes", len(rows), len(changes))
+	}
+	if rows[1].Left != left[1] || rows[1].Right != right[1] {
+		t.Fatalf("original text was lost: %#v", rows[1])
 	}
 }
 
