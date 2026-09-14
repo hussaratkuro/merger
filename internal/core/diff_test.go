@@ -176,3 +176,90 @@ func TestThreeWayMergeIdentityInvariants(t *testing.T) {
 		}
 	}
 }
+
+func TestMergePlanEditsRouteIntoTheOwningChunk(t *testing.T) {
+	plan := BuildMergePlan(
+		[]string{"one", "two", "three"},
+		[]string{"one", "MINE", "three"},
+		[]string{"one", "THEIRS", "three"},
+	)
+	if plan.UnresolvedCount() != 1 {
+		t.Fatalf("expected one conflict, got %d", plan.UnresolvedCount())
+	}
+	plan.Resolve(0, ResolutionMine, nil)
+	if got := plan.ChunkResultStart(0); got != 1 {
+		t.Fatalf("chunk result start = %d, want 1", got)
+	}
+	if got := plan.ChunkForResultLine(1); got != 0 {
+		t.Fatalf("owner of result line 1 = %d, want chunk 0", got)
+	}
+	if got := plan.ChunkForResultLine(0); got != -1 {
+		t.Fatalf("owner of context line 0 = %d, want -1", got)
+	}
+
+	plan.SetResultLine(1, "EDITED")
+	if got := plan.ResultLines(); !slices.Equal(got, []string{"one", "EDITED", "three"}) {
+		t.Fatalf("result = %#v", got)
+	}
+	if plan.Chunks[0].Resolution != ResolutionManual {
+		t.Fatalf("resolution = %v, want manual", plan.Chunks[0].Resolution)
+	}
+	if !slices.Equal(plan.Chunks[0].Mine, []string{"MINE"}) {
+		t.Fatalf("editing the result damaged the MINE side: %#v", plan.Chunks[0].Mine)
+	}
+}
+
+func TestMergePlanContextEditsKeepChunksAligned(t *testing.T) {
+	plan := BuildMergePlan(
+		[]string{"one", "two", "three", "four"},
+		[]string{"one", "MINE", "three", "four"},
+		[]string{"one", "THEIRS", "three", "four"},
+	)
+	plan.Resolve(0, ResolutionMine, nil)
+	// Split the leading context line, then delete the trailing one.
+	plan.SetResultLine(0, "o")
+	plan.InsertResultLineAfter(0, "ne")
+	if got := plan.ResultLines(); !slices.Equal(got, []string{"o", "ne", "MINE", "three", "four"}) {
+		t.Fatalf("after the split = %#v", got)
+	}
+	if got := plan.ChunkForResultLine(2); got != 0 {
+		t.Fatalf("the chunk lost its place after a context insert: owner = %d", got)
+	}
+	plan.DeleteResultLine(4)
+	if got := plan.ResultLines(); !slices.Equal(got, []string{"o", "ne", "MINE", "three"}) {
+		t.Fatalf("after the delete = %#v", got)
+	}
+	if got := plan.ChunkForResultLine(2); got != 0 {
+		t.Fatalf("the chunk lost its place after a context delete: owner = %d", got)
+	}
+}
+
+func TestMergePlanKeepsChunksWithConflictMarkersUnresolved(t *testing.T) {
+	plan := BuildMergePlan(
+		[]string{"one", "two", "three"},
+		[]string{"one", "MINE", "three"},
+		[]string{"one", "THEIRS", "three"},
+	)
+	plan.SetResultLine(2, "edited inside the markers")
+	if plan.UnresolvedCount() != 1 {
+		t.Fatal("an edit that left conflict markers in place was accepted as resolved")
+	}
+	for plan.ChunkForResultLine(1) == 0 && HasConflictMarkers(plan.Chunks[0].Result) {
+		plan.DeleteResultLine(1)
+	}
+	if plan.UnresolvedCount() != 0 {
+		t.Fatalf("removing every marker left %d unresolved", plan.UnresolvedCount())
+	}
+}
+
+func TestMergePlanCloneIsIndependent(t *testing.T) {
+	plan := BuildMergePlan([]string{"a"}, []string{"b"}, []string{"c"})
+	snapshot := plan.Clone()
+	plan.Resolve(0, ResolutionMine, nil)
+	if got := snapshot.ResultLines(); slices.Equal(got, plan.ResultLines()) {
+		t.Fatalf("the clone followed the original: %#v", got)
+	}
+	if snapshot.UnresolvedCount() != 1 {
+		t.Fatal("the clone lost the original unresolved state")
+	}
+}

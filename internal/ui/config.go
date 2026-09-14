@@ -46,11 +46,13 @@ Keys:
   Backspace         parent directory
   Space / Tab       select the highlighted path
   Type a name       jump to a matching picker entry
-  Type / click      edit directly in a two-file comparison
+  Type / click      edit directly in a two-file comparison and in the
+                    MERGED RESULT pane of a three-way merge
+  Alt+B/A/U         three-way merge: base / both / restore conflict markers
   Ctrl+Z            undo
   Ctrl+Shift+Z/Y    redo
   Ctrl+S            save
-  F1 / ?             help (F1 in editable file comparison)
+  F1 / ?            help (F1 in the editable comparison and merge views)
 `
 
 func ParseArgs(args []string) (Config, error) {

@@ -39,7 +39,11 @@ var (
 	styleFocus    = lipgloss.NewStyle().Background(lipgloss.Color(moSurface1)).Foreground(lipgloss.Color(moLavender)).Bold(true)
 	styleCursor   = lipgloss.NewStyle().Background(lipgloss.Color(moLavender)).Foreground(lipgloss.Color(moBase)).Bold(true)
 	styleSelected = lipgloss.NewStyle().Background(lipgloss.Color(moSurface0))
-	styleBorder   = lipgloss.NewStyle().Border(lipgloss.NormalBorder()).BorderForeground(lipgloss.Color(moSurface1))
+	// The scrollbar sits in its own column beside the change map so the file
+	// position stays legible even where the map is solid with changes.
+	styleScrollTrack = lipgloss.NewStyle().Foreground(lipgloss.Color(moSurface1))
+	styleScrollThumb = lipgloss.NewStyle().Foreground(lipgloss.Color(moLavender)).Bold(true)
+	styleBorder      = lipgloss.NewStyle().Border(lipgloss.NormalBorder()).BorderForeground(lipgloss.Color(moSurface1))
 )
 
 func hint(key, description string) string {

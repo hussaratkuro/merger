@@ -3,6 +3,7 @@ package core
 import (
 	"slices"
 	"sort"
+	"strings"
 )
 
 type ChangeKind uint8
@@ -418,4 +419,170 @@ func (p MergePlan) Rows() ([]MergeRow, []CompareChange) {
 		theirNo++
 	}
 	return rows, changes
+}
+
+// Clone returns a deep copy so the UI can snapshot a plan for undo/redo.
+func (p MergePlan) Clone() MergePlan {
+	clone := MergePlan{Base: slices.Clone(p.Base), Chunks: slices.Clone(p.Chunks)}
+	for i := range clone.Chunks {
+		clone.Chunks[i].Base = slices.Clone(clone.Chunks[i].Base)
+		clone.Chunks[i].Mine = slices.Clone(clone.Chunks[i].Mine)
+		clone.Chunks[i].Theirs = slices.Clone(clone.Chunks[i].Theirs)
+		clone.Chunks[i].Result = slices.Clone(clone.Chunks[i].Result)
+	}
+	return clone
+}
+
+// ResultOwner records where one merged-result line is stored so a free cursor
+// over the result pane can write back into the owning chunk or base context.
+type ResultOwner struct {
+	Chunk int // -1 for an unchanged base context line
+	Index int // position inside Chunks[Chunk].Result, or inside Base
+}
+
+// ResultOwners lists one owner per line of ResultLines, in the same order.
+func (p MergePlan) ResultOwners() []ResultOwner {
+	owners := make([]ResultOwner, 0, len(p.Base))
+	position := 0
+	for index, chunk := range p.Chunks {
+		for ; position < chunk.BaseStart; position++ {
+			owners = append(owners, ResultOwner{Chunk: -1, Index: position})
+		}
+		for i := range chunk.Result {
+			owners = append(owners, ResultOwner{Chunk: index, Index: i})
+		}
+		position = chunk.BaseEnd
+	}
+	for ; position < len(p.Base); position++ {
+		owners = append(owners, ResultOwner{Chunk: -1, Index: position})
+	}
+	return owners
+}
+
+// ChunkForResultLine reports the chunk owning a merged-result line, or -1 when
+// the line is unchanged base context.
+func (p MergePlan) ChunkForResultLine(line int) int {
+	owners := p.ResultOwners()
+	if line < 0 || line >= len(owners) {
+		return -1
+	}
+	return owners[line].Chunk
+}
+
+// ChunkResultStart returns the merged-result line where a chunk begins, which
+// stays meaningful even when the chunk resolved to no lines at all.
+func (p MergePlan) ChunkResultStart(index int) int {
+	line, position := 0, 0
+	for i, chunk := range p.Chunks {
+		line += chunk.BaseStart - position
+		if i == index {
+			return line
+		}
+		line += len(chunk.Result)
+		position = chunk.BaseEnd
+	}
+	return line
+}
+
+// SetResultLine replaces one merged-result line in place.
+func (p *MergePlan) SetResultLine(line int, value string) bool {
+	owners := p.ResultOwners()
+	if line < 0 || line >= len(owners) {
+		return false
+	}
+	owner := owners[line]
+	if owner.Chunk < 0 {
+		p.Base[owner.Index] = value
+		return true
+	}
+	p.Chunks[owner.Chunk].Result[owner.Index] = value
+	p.markEdited(owner.Chunk)
+	return true
+}
+
+// InsertResultLineAfter inserts a line directly below a merged-result line,
+// keeping it in the same chunk or base context. Pass -1 to insert at the top.
+func (p *MergePlan) InsertResultLineAfter(line int, value string) bool {
+	owners := p.ResultOwners()
+	if line < -1 || line >= len(owners) {
+		return false
+	}
+	if len(owners) == 0 {
+		if len(p.Chunks) > 0 {
+			last := len(p.Chunks) - 1
+			p.Chunks[last].Result = append(p.Chunks[last].Result, value)
+			p.markEdited(last)
+			return true
+		}
+		p.Base = append(p.Base, value)
+		return true
+	}
+	if line < 0 {
+		return p.insertOwned(owners[0], 0, value)
+	}
+	return p.insertOwned(owners[line], 1, value)
+}
+
+func (p *MergePlan) insertOwned(owner ResultOwner, shift int, value string) bool {
+	index := owner.Index + shift
+	if owner.Chunk < 0 {
+		p.Base = slices.Insert(p.Base, index, value)
+		for i := range p.Chunks {
+			if p.Chunks[i].BaseStart >= index {
+				p.Chunks[i].BaseStart++
+				p.Chunks[i].BaseEnd++
+			}
+		}
+		return true
+	}
+	chunk := &p.Chunks[owner.Chunk]
+	chunk.Result = slices.Insert(chunk.Result, index, value)
+	p.markEdited(owner.Chunk)
+	return true
+}
+
+// DeleteResultLine removes one merged-result line from its owner.
+func (p *MergePlan) DeleteResultLine(line int) bool {
+	owners := p.ResultOwners()
+	if line < 0 || line >= len(owners) {
+		return false
+	}
+	owner := owners[line]
+	if owner.Chunk < 0 {
+		p.Base = slices.Delete(p.Base, owner.Index, owner.Index+1)
+		for i := range p.Chunks {
+			if p.Chunks[i].BaseStart > owner.Index {
+				p.Chunks[i].BaseStart--
+				p.Chunks[i].BaseEnd--
+			}
+		}
+		return true
+	}
+	chunk := &p.Chunks[owner.Chunk]
+	chunk.Result = slices.Delete(chunk.Result, owner.Index, owner.Index+1)
+	p.markEdited(owner.Chunk)
+	return true
+}
+
+// markEdited records a typed edit as a manual resolution, but a chunk whose
+// text still carries conflict markers stays unresolved so it cannot be saved.
+func (p *MergePlan) markEdited(index int) {
+	chunk := &p.Chunks[index]
+	if HasConflictMarkers(chunk.Result) {
+		chunk.Resolution = ResolutionUnresolved
+		return
+	}
+	chunk.Resolution = ResolutionManual
+}
+
+// HasConflictMarkers reports whether any line is still a conflict marker.
+func HasConflictMarkers(lines []string) bool {
+	for _, line := range lines {
+		for _, marker := range [...]string{"<<<<<<<", "|||||||", "=======", ">>>>>>>"} {
+			if strings.HasPrefix(line, marker) {
+				return true
+			}
+		}
+	}
+	return false
 }

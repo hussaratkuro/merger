@@ -66,8 +66,11 @@ merger --mine mine.txt --base base.txt --theirs theirs.txt --output result.txt
 - A pushed change stays at its original screen location instead of selecting the
   next diff. Pending target lines remain highlighted with a `◆` marker until a
   successful save.
-- The right-side whole-file overview uses prominent double-width blocks for
-  changes and the visible viewport.
+- The right-hand overview draws the whole file as double-width change blocks and
+  keeps the scrollbar in its own column beside them. Its bright thumb marks the
+  part of the file currently on screen, so the position stays readable even
+  where the change map is solid with differences. The same overview and
+  scrollbar appear in the three-way merge.
 - The comparison panes are directly editable: click a character to place the
   active cursor, or move it with the arrow keys, then type immediately. `Enter`,
   `Backspace`, and `Delete` edit the document without opening another screen.
@@ -84,13 +87,31 @@ The main view shows `MINE | MERGED RESULT | THEIRS` across the entire file.
 Disjoint and identical edits merge automatically. Overlapping edits remain
 explicit conflicts.
 
-- `Alt+Right` or `m`: MINE into the result
-- `Alt+Left` or `t`: THEIRS into the result
-- `b`: BASE into the result
-- `a`: MINE followed by THEIRS
-- `u`: restore conflict markers
-- `e`: manually edit the selected result chunk
+The middle `MERGED RESULT` pane is directly editable, exactly like a pane of the
+two-file comparison: click a character or move the cursor with the arrow keys,
+then type. There is no separate chunk-edit screen and no `e` step — `Enter`,
+`Backspace`, `Delete` and `Tab` change the result in place, both inside a
+conflict and in the unchanged context lines around it. Because every printable
+key types into the result, the change actions are all on `Alt`:
+
+- `Alt+Up` / `Alt+Down`: previous / next change
+- `Alt+Right`: MINE into the result
+- `Alt+Left`: THEIRS into the result
+- `Alt+B`: BASE into the result
+- `Alt+A`: MINE followed by THEIRS
+- `Alt+U`: restore the conflict markers of the selected change
+- `Ctrl+Z` undoes and `Ctrl+Shift+Z` or `Ctrl+Y` redoes, covering typed edits and
+  side choices alike
+- `F1` opens help; `F5` reloads all three inputs after a confirmation
 - `Ctrl+S`: save, only after every conflict is resolved
+- `Esc`: cancel, with a confirmation while the result is unsaved
+
+Typing inside a conflict resolves it as a manual edit, but a chunk whose text
+still contains `<<<<<<<`, `|||||||`, `=======` or `>>>>>>>` stays unresolved.
+Conflict markers therefore cannot reach the saved result by accident.
+
+Clicking `MINE` or `THEIRS` selects the change under the pointer without editing
+those panes; only the merged result is writable.
 
 In three-way mode an unsaved exit returns status 2. `svntui` uses this to leave
 the SVN conflict unresolved after a cancellation. A successful save returns 0.

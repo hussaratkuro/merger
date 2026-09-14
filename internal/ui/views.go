@@ -27,8 +27,6 @@ func (a *App) View() string {
 		return a.viewCompare()
 	case screenMerge:
 		return a.viewMerge()
-	case screenEditor:
-		return a.viewEditor()
 	case screenHelp:
 		return a.viewHelp()
 	default:
@@ -398,17 +396,13 @@ func (a *App) viewMerge() string {
 	visible := a.fileVisibleRows()
 	a.rowOffset = clamp(a.rowOffset, 0, max(0, len(a.mergeRows)-visible))
 	contentWidth := max(30, a.width-6)
-	numWidth := len(fmt.Sprintf("%d", max(len(a.mine.Lines), len(a.mergePlan.ResultLines()), len(a.theirs.Lines), 1)))
-	separatorWidth := 6
-	cellSpace := max(6, contentWidth-separatorWidth-3*(numWidth+1))
-	mineWidth := cellSpace / 3
-	resultWidth := cellSpace / 3
-	theirWidth := cellSpace - mineWidth - resultWidth
+	layout := a.mergeLayout()
+	a.ensureMergeCursorVisible(layout.resultWidth)
 
 	var body strings.Builder
-	body.WriteString(renderPaneTitle("MINE", mineWidth+numWidth+1, false) + styleMuted.Render(" │ ") +
-		renderPaneTitle("MERGED RESULT", resultWidth+numWidth+1, true) + styleMuted.Render(" │ ") +
-		renderPaneTitle("THEIRS", theirWidth+numWidth+1, false) + "\n")
+	body.WriteString(renderPaneTitle("MINE", layout.mineWidth+layout.numWidth+1, false) + styleMuted.Render(" │ ") +
+		renderPaneTitle("MERGED RESULT", layout.resultWidth+layout.numWidth+1, true) + styleMuted.Render(" │ ") +
+		renderPaneTitle("THEIRS", layout.theirWidth+layout.numWidth+1, false) + "\n")
 	for rowIndex := a.rowOffset; rowIndex < a.rowOffset+visible; rowIndex++ {
 		if rowIndex >= len(a.mergeRows) {
 			body.WriteString(strings.Repeat(" ", contentWidth) + "\n")
@@ -416,7 +410,8 @@ func (a *App) viewMerge() string {
 		}
 		row := a.mergeRows[rowIndex]
 		selected := row.Chunk >= 0 && row.Chunk == a.changeCursor
-		body.WriteString(renderMergeRow(row, numWidth, mineWidth, resultWidth, theirWidth, selected) + "\n")
+		cursor := a.cursorForMergeRow(rowIndex, row.ResultNo)
+		body.WriteString(renderMergeRow(row, layout, selected, cursor) + "\n")
 	}
 	kinds := make([]core.ChangeKind, len(a.mergeRows))
 	for i, row := range a.mergeRows {
@@ -428,24 +423,25 @@ func (a *App) viewMerge() string {
 	progress := fmt.Sprintf("%d changes · %d unresolved · output: %s", len(a.mergePlan.Chunks), a.mergePlan.UnresolvedCount(), a.config.Output)
 	return a.header("three-way merge") + "\n" + styleMuted.Render(truncateVisual(progress, a.width)) + "\n" +
 		a.panel(content, visible+1) + "\n" +
-		a.footer(hint("Alt+↑/↓", "change"), hint("Alt+→", "mine→result"), hint("Alt+←", "theirs→result"),
-			hint("b/a/u", "base/both/unresolve"), hint("e", "edit chunk"), hint("Ctrl+S", "save"), hint("?", "help"))
+		a.footer(hint("type/click", "edit result"), hint("arrows", "cursor"), hint("Alt+↑/↓", "change"),
+			hint("Alt+→", "mine"), hint("Alt+←", "theirs"), hint("Alt+B/A/U", "base/both/unresolve"),
+			hint("Ctrl+Z", "undo"), hint("Ctrl+S", "save"), hint("Esc", "cancel"), hint("F1", "help"))
 }
 
-func renderMergeRow(row core.MergeRow, numWidth, mineWidth, resultWidth, theirWidth int, selected bool) string {
+func renderMergeRow(row core.MergeRow, layout mergeLayout, selected bool, cursor cellCursor) string {
 	style := changeStyle(row.Kind)
 	if selected {
 		style = style.Background(lipgloss.Color(moSurface0)).Bold(true)
 	}
 	number := func(value int) string {
 		if value <= 0 {
-			return strings.Repeat(" ", numWidth) + " "
+			return strings.Repeat(" ", layout.numWidth) + " "
 		}
-		return fmt.Sprintf("%*d ", numWidth, value)
+		return fmt.Sprintf("%*d ", layout.numWidth, value)
 	}
-	return styleMuted.Render(number(row.MineNo)) + style.Render(padVisual(expandTabs(row.Mine), mineWidth)) + styleMuted.Render(" │ ") +
-		styleMuted.Render(number(row.ResultNo)) + style.Render(padVisual(expandTabs(row.Result), resultWidth)) + styleMuted.Render(" │ ") +
-		styleMuted.Render(number(row.TheirNo)) + style.Render(padVisual(expandTabs(row.Theirs), theirWidth))
+	return styleMuted.Render(number(row.MineNo)) + style.Render(padVisual(expandTabs(row.Mine), layout.mineWidth)) + styleMuted.Render(" │ ") +
+		styleMuted.Render(number(row.ResultNo)) + renderEditableCell(row.Result, layout.resultWidth, style, cursor) + styleMuted.Render(" │ ") +
+		styleMuted.Render(number(row.TheirNo)) + style.Render(padVisual(expandTabs(row.Theirs), layout.theirWidth))
 }
 
 func (a *App) viewBinaryMerge() string {
@@ -461,16 +457,7 @@ func (a *App) viewBinaryMerge() string {
 		styleMuted.Render("Resolution: ") + choiceStyle.Render(choice) + "\n" +
 		styleMuted.Render("Output:     ") + styleText.Render(a.config.Output)
 	return a.header("binary three-way merge") + "\n" + a.panel(content, max(9, a.height-5)) + "\n" +
-		a.footer(hint("Alt+→/m", "mine"), hint("Alt+←/t", "theirs"), hint("b", "base"), hint("Ctrl+S", "save"), hint("q", "cancel"))
-}
-
-func (a *App) viewEditor() string {
-	title := "edit focused document"
-	if a.editorTarget == editMergeChunk {
-		title = fmt.Sprintf("edit merge chunk %d", a.editorChunk+1)
-	}
-	return a.header(title) + "\n" + a.editor.View() + "\n" +
-		a.footer(hint("Ctrl+S/Ctrl+Enter", "apply in memory"), hint("Esc", "cancel edit"))
+		a.footer(hint("Alt+→", "mine"), hint("Alt+←", "theirs"), hint("Alt+B", "base"), hint("Ctrl+S", "save"), hint("Esc", "cancel"))
 }
 
 func (a *App) viewHelp() string {
@@ -500,9 +487,14 @@ func (a *App) viewHelp() string {
 		"  Tab changes the focused side; Ctrl+S hides/shows identical entries; F5 refreshes\n" +
 		"  Directories are read one level at a time, never indexed recursively\n\n" +
 		styleTitle.Render("Three-way merge") + "\n" +
-		"  Alt+Right/m accepts MINE; Alt+Left/t accepts THEIRS\n" +
-		"  b accepts BASE; a concatenates both; u restores conflict markers\n" +
-		"  e edits the selected result chunk; Ctrl+S saves when all conflicts resolve"
+		"  Click or use the arrows to place the cursor in MERGED RESULT, then type\n" +
+		"  Tab indents; the result is the only editable pane, so it never changes focus\n" +
+		"  Typing, Enter, Backspace and Delete edit the result in place; no separate editor\n" +
+		"  Alt+Right accepts MINE; Alt+Left accepts THEIRS\n" +
+		"  Alt+B accepts BASE; Alt+A concatenates both; Alt+U restores conflict markers\n" +
+		"  Ctrl+Z undoes; Ctrl+Shift+Z or Ctrl+Y redoes; F5 reloads all three inputs\n" +
+		"  A chunk still holding conflict markers stays unresolved and blocks Ctrl+S\n" +
+		"  Ctrl+S saves when every conflict is resolved; Esc cancels with status 2"
 	return a.header("help") + "\n" + a.panel(help, max(12, a.height-5)) + "\n" + a.footer(hint("any key", "back"))
 }
 
@@ -539,13 +531,17 @@ func stagedChangeStyle(kind core.ChangeKind) lipgloss.Style {
 	}
 }
 
+// renderOverview draws a whole-file change map and, in a dedicated column next
+// to it, a scrollbar whose thumb marks the visible part of the file. Keeping
+// the two apart means the position indicator stays readable even where the map
+// is solid with changes.
 func renderOverview(kinds []core.ChangeKind, height, offset, visible int) string {
 	if height <= 0 {
 		return ""
 	}
 	total := max(1, len(kinds))
-	viewStart := clamp(offset*height/total, 0, height-1)
-	viewEnd := clamp(divCeil((offset+visible)*height, total)-1, viewStart, height-1)
+	thumbStart := clamp(offset*height/total, 0, height-1)
+	thumbEnd := clamp(divCeil((offset+visible)*height, total)-1, thumbStart, height-1)
 	var result strings.Builder
 	for row := range height {
 		from := row * total / height
@@ -554,17 +550,18 @@ func renderOverview(kinds []core.ChangeKind, height, offset, visible int) string
 		for i := from; i < to; i++ {
 			kind = strongerKind(kind, kinds[i])
 		}
-		glyph := styleMuted.Render("││")
-		if row >= viewStart && row <= viewEnd {
-			glyph = styleSubtle.Bold(true).Render("┃┃")
-		}
+		glyph := styleMuted.Render("··")
 		if kind != core.ChangeSame {
 			glyph = changeStyle(kind).Bold(true).Render("██")
+		}
+		bar := styleScrollTrack.Render("│")
+		if row >= thumbStart && row <= thumbEnd {
+			bar = styleScrollThumb.Render("█")
 		}
 		if row > 0 {
 			result.WriteByte('\n')
 		}
-		result.WriteString(glyph)
+		result.WriteString(glyph + bar)
 	}
 	return result.String()
 }

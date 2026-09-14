@@ -287,10 +287,10 @@ func (a *App) updateMerge(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if key == a.confirmKey {
 			a.confirmKey = ""
 			switch key {
-			case "q", "esc":
+			case "esc":
 				a.cancelled = !a.saved
 				return a, tea.Quit
-			case "r":
+			case "f5":
 				a.screen, a.loadingLabel = screenLoading, "Reloading merge inputs..."
 				return a, loadMergeCmd(a.config)
 			}
@@ -299,74 +299,103 @@ func (a *App) updateMerge(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	switch key {
-	case "q", "esc":
+	case "esc":
 		if a.dirtyMerge() {
 			a.confirmKey = key
-			a.setStatus("Merge output has not been saved. Press the same key again to cancel and quit.", true)
+			a.setStatus("Merge output has not been saved. Press Esc again to cancel and quit.", true)
 			return a, nil
 		}
 		return a, tea.Quit
-	case "?":
+	case "f1":
 		a.returnScreen, a.screen = screenMerge, screenHelp
-	case "up", "k":
-		a.scrollFileRows(-1, len(a.mergeRows))
-	case "down", "j":
-		a.scrollFileRows(1, len(a.mergeRows))
-	case "pgup":
-		a.scrollFileRows(-a.fileVisibleRows(), len(a.mergeRows))
-	case "pgdown":
-		a.scrollFileRows(a.fileVisibleRows(), len(a.mergeRows))
-	case "home", "g":
-		a.rowOffset = 0
-	case "end", "G":
-		a.rowOffset = max(0, len(a.mergeRows)-a.fileVisibleRows())
+	case "left", "right", "up", "down", "pgup", "pgdown", "home", "end", "ctrl+home", "ctrl+end":
+		a.moveMergeCursor(key)
+	case "tab":
+		// The result is the only editable pane here, so Tab indents instead of
+		// changing focus the way it does in the two-file comparison.
+		a.insertMergeText("\t")
 	case "alt+up":
 		a.moveMergeChange(-1)
 	case "alt+down":
 		a.moveMergeChange(1)
-	case "alt+right", "m":
+	case "alt+right":
 		a.resolveMerge(core.ResolutionMine)
-	case "alt+left", "t":
+	case "alt+left":
 		a.resolveMerge(core.ResolutionTheirs)
-	case "b":
+	case "alt+b":
 		a.resolveMerge(core.ResolutionBase)
-	case "a":
+	case "alt+a":
 		a.resolveMerge(core.ResolutionBoth)
-	case "u":
+	case "alt+u":
 		a.resolveMerge(core.ResolutionUnresolved)
-	case "e", "enter":
-		if a.mergeBinary {
-			a.setStatus("Binary chunks cannot be manually text-edited.", true)
-			break
-		}
-		a.openMergeEditor()
+	case "enter":
+		a.insertMergeText("\n")
+	case "backspace":
+		a.backspaceMerge()
+	case "delete":
+		a.deleteMerge()
+	case "ctrl+z":
+		a.undoMerge()
+	case "ctrl+shift+z", "ctrl+y":
+		a.redoMerge()
 	case "ctrl+s":
 		cmd := a.saveMergeCmd()
 		if cmd != nil {
 			a.saving = true
 		}
 		return a, cmd
-	case "r":
-		a.confirmKey = "r"
-		a.setStatus("Press r again to discard decisions and reload all merge inputs.", true)
+	case "f5":
+		a.confirmKey = "f5"
+		a.setStatus("Press F5 again to discard decisions and reload all merge inputs.", true)
+	}
+	if key == " " {
+		a.insertMergeText(" ")
+	} else if msg.Type == tea.KeyRunes && !msg.Alt {
+		a.insertMergeText(string(msg.Runes))
 	}
 	return a, nil
 }
 
 func (a *App) moveMergeChange(direction int) {
-	count := len(a.mergeChanges)
 	if a.mergeBinary {
-		count = 1
+		a.changeCursor = 0
+		a.setStatus("Change 1/1", false)
+		return
 	}
-	if count == 0 {
+	if len(a.mergeChanges) == 0 {
 		a.setStatus("All three files are identical.", false)
 		return
 	}
-	a.changeCursor = clamp(a.changeCursor+direction, 0, count-1)
-	if !a.mergeBinary {
-		a.rowOffset = a.mergeChanges[a.changeCursor].RowStart
+	if a.changeCursor < 0 {
+		// The cursor sits in unchanged context, so step from its row.
+		row := a.rowForMergeCursor()
+		candidate := -1
+		if direction > 0 {
+			for index, change := range a.mergeChanges {
+				if change.RowStart >= row {
+					candidate = index
+					break
+				}
+			}
+		} else {
+			for index := len(a.mergeChanges) - 1; index >= 0; index-- {
+				if a.mergeChanges[index].RowStart < row {
+					candidate = index
+					break
+				}
+			}
+		}
+		if candidate < 0 {
+			a.setStatus("There is no change in that direction.", false)
+			return
+		}
+		a.changeCursor = candidate
+	} else {
+		a.changeCursor = clamp(a.changeCursor+direction, 0, len(a.mergeChanges)-1)
 	}
-	a.setStatus(fmt.Sprintf("Change %d/%d", a.changeCursor+1, count), false)
+	a.rowOffset = a.mergeChanges[a.changeCursor].RowStart
+	a.placeMergeCursorAtChange()
+	a.setStatus(fmt.Sprintf("Change %d/%d", a.changeCursor+1, len(a.mergeChanges)), false)
 }
 
 func (a *App) resolveMerge(resolution core.Resolution) {
@@ -388,12 +417,14 @@ func (a *App) resolveMerge(resolution core.Resolution) {
 		return
 	}
 	if a.changeCursor < 0 || a.changeCursor >= len(a.mergePlan.Chunks) {
-		a.setStatus("There is no change to resolve.", false)
+		a.setStatus("Put the cursor inside a change, or use Alt+Up / Alt+Down first.", false)
 		return
 	}
+	a.pushMergeUndo()
 	if a.mergePlan.Resolve(a.changeCursor, resolution, nil) {
 		a.saved = false
 		a.rebuildMergeRows()
+		a.placeMergeCursorAtChange()
 		a.setStatus("Current change resolved as "+resolution.String()+".", false)
 	}
 }
@@ -425,43 +456,4 @@ func (a *App) saveMergeCmd() tea.Cmd {
 	path := a.config.Output
 	mode := modeForOutput(path, a.mine.Mode)
 	return func() tea.Msg { return mergeSavedMsg{err: core.AtomicWrite(path, []byte(text), mode)} }
-}
-
-func (a *App) openMergeEditor() {
-	if a.changeCursor < 0 || a.changeCursor >= len(a.mergePlan.Chunks) {
-		a.setStatus("There is no merge chunk to edit.", false)
-		return
-	}
-	a.editorTarget = editMergeChunk
-	a.editorChunk = a.changeCursor
-	a.editor.SetValue(editorText(a.mergePlan.Chunks[a.editorChunk].Result))
-	a.editor.Focus()
-	a.resizeEditor()
-	a.returnScreen, a.screen = screenMerge, screenEditor
-}
-
-func (a *App) updateEditor(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
-	case "esc":
-		a.editor.Blur()
-		a.screen = a.returnScreen
-		a.setStatus("Edit cancelled.", false)
-		return a, nil
-	case "ctrl+s", "ctrl+enter":
-		value := a.editor.Value()
-		a.editor.Blur()
-		switch a.editorTarget {
-		case editMergeChunk:
-			a.mergePlan.Resolve(a.editorChunk, core.ResolutionManual, core.SplitEditorLines(value))
-			a.changeCursor = a.editorChunk
-			a.saved = false
-			a.rebuildMergeRows()
-		}
-		a.screen = a.returnScreen
-		a.setStatus("Manual edit applied in memory.", false)
-		return a, nil
-	}
-	var cmd tea.Cmd
-	a.editor, cmd = a.editor.Update(msg)
-	return a, cmd
 }

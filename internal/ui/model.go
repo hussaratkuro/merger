@@ -6,9 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"strings"
 
-	"github.com/charmbracelet/bubbles/textarea"
 	tea "github.com/charmbracelet/bubbletea"
 
 	"merger/internal/core"
@@ -22,7 +20,6 @@ const (
 	screenDirectory
 	screenCompare
 	screenMerge
-	screenEditor
 	screenHelp
 )
 
@@ -31,13 +28,6 @@ type directoryLocation struct {
 	cursor      int
 	offset      int
 }
-
-type editorTarget uint8
-
-const (
-	editNone editorTarget = iota
-	editMergeChunk
-)
 
 type pendingDirectoryAction struct {
 	kind      string
@@ -120,9 +110,11 @@ type App struct {
 	mergeBinaryResult  []byte
 	mergeBinaryChoice  core.Resolution
 
-	editor       textarea.Model
-	editorTarget editorTarget
-	editorChunk  int
+	mergeResult           []string
+	mergeCursor           inlineCursor
+	mergeHorizontalOffset int
+	mergeUndo             []mergeSnapshot
+	mergeRedo             []mergeSnapshot
 
 	confirmKey string
 	saved      bool
@@ -131,17 +123,9 @@ type App struct {
 }
 
 func New(config Config) *App {
-	editor := textarea.New()
-	editor.Placeholder = "Edit the selected content"
-	editor.ShowLineNumbers = true
-	editor.CharLimit = 0
-	editor.KeyMap.WordBackward.SetKeys("ctrl+left")
-	editor.KeyMap.WordForward.SetKeys("ctrl+right")
-
 	a := &App{
 		config: config, screen: screenLoading, loadingLabel: "Opening comparison...",
 		showSame: true, dirFocus: 0, fileFocus: 0, changeCursor: -1, compareAnchorRow: -1,
-		editor: editor,
 	}
 	if config.Mode == ModeDirectory {
 		a.dirLeft, a.dirRight = config.Left, config.Right
@@ -268,7 +252,6 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		a.width, a.height = msg.Width, msg.Height
-		a.resizeEditor()
 		return a, nil
 	case browserQueryExpiredMsg:
 		if msg.id == a.browserQueryID {
@@ -398,8 +381,6 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return a.updateCompare(msg)
 		case screenMerge:
 			return a.updateMerge(msg)
-		case screenEditor:
-			return a.updateEditor(msg)
 		case screenHelp:
 			a.screen = a.returnScreen
 			return a, nil
@@ -410,11 +391,6 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (a *App) setStatus(message string, isError bool) {
 	a.status, a.statusError = message, isError
-}
-
-func (a *App) resizeEditor() {
-	a.editor.SetWidth(max(20, a.width-4))
-	a.editor.SetHeight(max(5, a.height-7))
 }
 
 func (a *App) rebuildCompare() {
@@ -563,6 +539,8 @@ func (a *App) initializeMerge() {
 			a.mergeBinaryChoice = core.ResolutionUnresolved
 		}
 		a.changeCursor = 0
+		a.mergeResult = nil
+		a.resetMergeEditing()
 		return
 	}
 	a.mergePlan = core.BuildMergePlan(a.base.Lines, a.mine.Lines, a.theirs.Lines)
@@ -579,10 +557,18 @@ func (a *App) initializeMerge() {
 	} else {
 		a.changeCursor = -1
 	}
+	a.resetMergeEditing()
+}
+
+// refreshMergeRows re-renders the plan without moving the viewport, so a typed
+// edit leaves the cursor and the scroll position where the user put them.
+func (a *App) refreshMergeRows() {
+	a.mergeRows, a.mergeChanges = a.mergePlan.Rows()
+	a.mergeResult = a.mergePlan.ResultLines()
 }
 
 func (a *App) rebuildMergeRows() {
-	a.mergeRows, a.mergeChanges = a.mergePlan.Rows()
+	a.refreshMergeRows()
 	if len(a.mergeChanges) == 0 {
 		a.changeCursor = -1
 		return
@@ -593,9 +579,15 @@ func (a *App) rebuildMergeRows() {
 
 func (a *App) updateMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	event := tea.MouseEvent(msg)
-	if a.screen == screenCompare && event.Button == tea.MouseButtonLeft && event.Action == tea.MouseActionPress {
-		a.clickCompare(event)
-		return a, nil
+	if event.Button == tea.MouseButtonLeft && event.Action == tea.MouseActionPress {
+		switch a.screen {
+		case screenCompare:
+			a.clickCompare(event)
+			return a, nil
+		case screenMerge:
+			a.clickMerge(event)
+			return a, nil
+		}
 	}
 	delta := 0
 	switch msg.Type {
@@ -654,8 +646,6 @@ func cleanBase(path string) string { return filepath.Base(filepath.Clean(path)) 
 func (a *App) hasUnsavedCompare() bool { return a.docs[0].Dirty || a.docs[1].Dirty }
 
 func (a *App) dirtyMerge() bool { return !a.saved }
-
-func editorText(lines []string) string { return strings.Join(lines, "\n") }
 
 func modeForOutput(path string, fallback os.FileMode) os.FileMode {
 	if info, err := os.Stat(path); err == nil {

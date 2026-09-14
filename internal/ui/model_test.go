@@ -79,15 +79,34 @@ func TestComparePushStaysAtAppliedDiffAndMarksTargetAsStaged(t *testing.T) {
 	}
 }
 
-func TestOverviewScrollbarUsesProminentDoubleWidthCells(t *testing.T) {
+func TestOverviewSeparatesChangeMapFromScrollbar(t *testing.T) {
 	overview := renderOverview([]core.ChangeKind{core.ChangeSame, core.ChangeAdded, core.ChangeModified}, 6, 0, 2)
-	if got := lipgloss.Width(overview); got != 2 {
-		t.Fatalf("overview width = %d, want 2", got)
+	if got := lipgloss.Width(overview); got != 3 {
+		t.Fatalf("overview width = %d, want 3", got)
 	}
-	for _, line := range strings.Split(ansi.Strip(overview), "\n") {
-		if line != "││" && line != "┃┃" && line != "██" {
-			t.Fatalf("overview contains a non-prominent cell %q", line)
+	thumbRows := 0
+	for number, line := range strings.Split(ansi.Strip(overview), "\n") {
+		runes := []rune(line)
+		if len(runes) != 3 {
+			t.Fatalf("row %d = %q, want three cells", number, line)
 		}
+		if changeMap := string(runes[:2]); changeMap != "··" && changeMap != "██" {
+			t.Fatalf("row %d change map = %q", number, changeMap)
+		}
+		switch runes[2] {
+		case '█':
+			thumbRows++
+		case '│':
+		default:
+			t.Fatalf("row %d scrollbar cell = %q", number, string(runes[2]))
+		}
+	}
+	if thumbRows == 0 {
+		t.Fatal("the scrollbar never marked the visible part of the file")
+	}
+	scrolled := ansi.Strip(renderOverview(make([]core.ChangeKind, 60), 6, 54, 6))
+	if first := strings.Split(scrolled, "\n")[0]; strings.HasSuffix(first, "█") {
+		t.Fatalf("a scrolled view still marked the first row as visible: %q", first)
 	}
 }
 

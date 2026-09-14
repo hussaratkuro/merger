@@ -95,16 +95,6 @@ func detectedEOL(text string) string {
 	return ""
 }
 
-func SplitEditorLines(text string) []string {
-	normalized := strings.ReplaceAll(text, "\r\n", "\n")
-	normalized = strings.ReplaceAll(normalized, "\r", "\n")
-	normalized = strings.TrimSuffix(normalized, "\n")
-	if normalized == "" {
-		return nil
-	}
-	return strings.Split(normalized, "\n")
-}
-
 func AtomicWrite(path string, data []byte, mode os.FileMode) error {
 	dir := filepath.Dir(path)
 	tmp, err := os.CreateTemp(dir, ".merger-*")
