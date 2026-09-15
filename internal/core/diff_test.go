@@ -3,6 +3,7 @@ package core
 import (
 	"math/rand"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -44,19 +45,21 @@ func TestDiffEditsRoundTrip(t *testing.T) {
 	}
 }
 
-func TestDiffEditsLargeInputUsesBoundedFallback(t *testing.T) {
+func TestDiffEditsLargeInputKeepsSeparatedMiddleChanges(t *testing.T) {
 	base := make([]string, 2500)
-	other := make([]string, 2500)
 	for i := range base {
-		base[i], other[i] = "same", "same"
+		base[i] = "line-" + strconv.Itoa(i)
 	}
-	other[1200] = "changed"
+	other := slices.Clone(base)
+	other[1000] = "first change"
+	other[1500] = "second change"
 	edits := DiffEdits(base, other)
-	if len(edits) != 1 || edits[0].BaseStart != 1200 || edits[0].BaseEnd != 1201 {
-		t.Fatalf("large fallback edit = %#v", edits)
+	if len(edits) != 2 || edits[0].BaseStart != 1000 || edits[0].BaseEnd != 1001 ||
+		edits[1].BaseStart != 1500 || edits[1].BaseEnd != 1501 {
+		t.Fatalf("large middle edits = %#v", edits)
 	}
 	if got := applyEdits(base, edits); !slices.Equal(got, other) {
-		t.Fatal("large fallback did not reproduce target")
+		t.Fatal("large exact middle diff did not reproduce target")
 	}
 }
 

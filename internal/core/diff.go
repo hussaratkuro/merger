@@ -25,15 +25,25 @@ type Edit struct {
 const maxLCSCells = 4_000_000
 
 // DiffEdits returns the replacements that turn base into other. Ordinary files
-// use an exact LCS. Inputs large enough to make a quadratic allocation unsafe
-// are represented by one middle replacement after trimming their common ends.
+// use an exact LCS. Large files first discard their common ends so a relatively
+// small changed middle can still be diffed exactly. Only a middle large enough
+// to make a quadratic allocation unsafe is represented by one replacement.
 func DiffEdits(base, other []string) []Edit {
 	if slices.Equal(base, other) {
 		return nil
 	}
 	n, m := len(base), len(other)
+	baseOffset := 0
 	if n > 0 && m > 0 && n+1 > maxLCSCells/(m+1) {
-		return middleReplacement(base, other)
+		prefix, suffix := commonEnds(base, other)
+		trimmedBase := base[prefix : len(base)-suffix]
+		trimmedOther := other[prefix : len(other)-suffix]
+		n, m = len(trimmedBase), len(trimmedOther)
+		if n > 0 && m > 0 && n+1 > maxLCSCells/(m+1) {
+			return middleReplacement(base, other)
+		}
+		base, other = trimmedBase, trimmedOther
+		baseOffset = prefix
 	}
 
 	cols := m + 1
@@ -78,21 +88,28 @@ func DiffEdits(base, other []string) []Edit {
 				j++
 			}
 		}
-		edits = append(edits, Edit{BaseStart: start, BaseEnd: i, NewLines: slices.Clone(added)})
+		edits = append(edits, Edit{
+			BaseStart: baseOffset + start,
+			BaseEnd:   baseOffset + i,
+			NewLines:  slices.Clone(added),
+		})
 	}
 	return edits
 }
 
-func middleReplacement(base, other []string) []Edit {
-	prefix := 0
+func commonEnds(base, other []string) (prefix, suffix int) {
 	for prefix < len(base) && prefix < len(other) && base[prefix] == other[prefix] {
 		prefix++
 	}
-	suffix := 0
 	for suffix < len(base)-prefix && suffix < len(other)-prefix &&
 		base[len(base)-1-suffix] == other[len(other)-1-suffix] {
 		suffix++
 	}
+	return prefix, suffix
+}
+
+func middleReplacement(base, other []string) []Edit {
+	prefix, suffix := commonEnds(base, other)
 	return []Edit{{
 		BaseStart: prefix,
 		BaseEnd:   len(base) - suffix,
