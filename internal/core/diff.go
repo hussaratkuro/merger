@@ -22,99 +22,137 @@ type Edit struct {
 	NewLines  []string
 }
 
-const maxLCSCells = 4_000_000
-
-// DiffEdits returns the replacements that turn base into other. Ordinary files
-// use an exact LCS. Large files first discard their common ends so a relatively
-// small changed middle can still be diffed exactly. Only a middle large enough
-// to make a quadratic allocation unsafe is represented by one replacement.
+// DiffEdits returns the replacements that turn base into other. It uses Myers'
+// linear-space O(ND) algorithm, so files of any size are diffed exactly: the
+// cost grows with the amount of change, not with the square of the file length.
 func DiffEdits(base, other []string) []Edit {
 	if slices.Equal(base, other) {
 		return nil
 	}
-	n, m := len(base), len(other)
-	baseOffset := 0
-	if n > 0 && m > 0 && n+1 > maxLCSCells/(m+1) {
-		prefix, suffix := commonEnds(base, other)
-		trimmedBase := base[prefix : len(base)-suffix]
-		trimmedOther := other[prefix : len(other)-suffix]
-		n, m = len(trimmedBase), len(trimmedOther)
-		if n > 0 && m > 0 && n+1 > maxLCSCells/(m+1) {
-			return middleReplacement(base, other)
-		}
-		base, other = trimmedBase, trimmedOther
-		baseOffset = prefix
-	}
-
-	cols := m + 1
-	dp := make([]int32, (n+1)*cols)
-	for i := n - 1; i >= 0; i-- {
-		for j := m - 1; j >= 0; j-- {
-			idx := i*cols + j
-			if base[i] == other[j] {
-				dp[idx] = dp[(i+1)*cols+j+1] + 1
-			} else {
-				down, right := dp[(i+1)*cols+j], dp[i*cols+j+1]
-				if down >= right {
-					dp[idx] = down
-				} else {
-					dp[idx] = right
-				}
+	ids := make(map[string]int32, len(base)+len(other))
+	intern := func(lines []string) []int32 {
+		out := make([]int32, len(lines))
+		for i, line := range lines {
+			id, ok := ids[line]
+			if !ok {
+				id = int32(len(ids))
+				ids[line] = id
 			}
+			out[i] = id
 		}
+		return out
 	}
+	a, b := intern(base), intern(other)
+	size := 2*(len(a)+len(b)) + 4
+	d := &myersDiff{a: a, b: b, vf: make([]int, size), vb: make([]int, size)}
+	d.diff(0, len(a), 0, len(b))
 
 	var edits []Edit
 	i, j := 0, 0
-	for i < n || j < m {
-		if i < n && j < m && base[i] == other[j] {
-			i++
-			j++
-			continue
+	flush := func(baseEnd, otherEnd int) {
+		if baseEnd > i || otherEnd > j {
+			edits = append(edits, Edit{BaseStart: i, BaseEnd: baseEnd, NewLines: slices.Clone(other[j:otherEnd])})
 		}
-		start := i
-		var added []string
-		for i < n || j < m {
-			if i < n && j < m && base[i] == other[j] {
-				break
-			}
-			if j < m && (i == n || dp[i*cols+j+1] > dp[(i+1)*cols+j]) {
-				added = append(added, other[j])
-				j++
-			} else if i < n {
-				i++
-			} else {
-				added = append(added, other[j])
-				j++
-			}
-		}
-		edits = append(edits, Edit{
-			BaseStart: baseOffset + start,
-			BaseEnd:   baseOffset + i,
-			NewLines:  slices.Clone(added),
-		})
 	}
+	for _, m := range d.matches {
+		flush(m[0], m[1])
+		i, j = m[0]+1, m[1]+1
+	}
+	flush(len(base), len(other))
 	return edits
 }
 
-func commonEnds(base, other []string) (prefix, suffix int) {
-	for prefix < len(base) && prefix < len(other) && base[prefix] == other[prefix] {
-		prefix++
-	}
-	for suffix < len(base)-prefix && suffix < len(other)-prefix &&
-		base[len(base)-1-suffix] == other[len(other)-1-suffix] {
-		suffix++
-	}
-	return prefix, suffix
+type myersDiff struct {
+	a, b    []int32
+	vf, vb  []int
+	matches [][2]int // (base index, other index) pairs of equal lines, ascending
 }
 
-func middleReplacement(base, other []string) []Edit {
-	prefix, suffix := commonEnds(base, other)
-	return []Edit{{
-		BaseStart: prefix,
-		BaseEnd:   len(base) - suffix,
-		NewLines:  slices.Clone(other[prefix : len(other)-suffix]),
-	}}
+// diff records the matched line pairs of a[a0:a1] and b[b0:b1] in order by
+// splitting the problem at its middle snake.
+func (d *myersDiff) diff(a0, a1, b0, b1 int) {
+	for a0 < a1 && b0 < b1 && d.a[a0] == d.b[b0] {
+		d.matches = append(d.matches, [2]int{a0, b0})
+		a0++
+		b0++
+	}
+	suffix := 0
+	for a0 < a1-suffix && b0 < b1-suffix && d.a[a1-1-suffix] == d.b[b1-1-suffix] {
+		suffix++
+	}
+	a1, b1 = a1-suffix, b1-suffix
+	if a0 < a1 && b0 < b1 {
+		x, y, u, v, ok := d.middleSnake(a0, a1, b0, b1)
+		if ok {
+			d.diff(a0, x, b0, y)
+			for x < u {
+				d.matches = append(d.matches, [2]int{x, y})
+				x++
+				y++
+			}
+			d.diff(u, a1, v, b1)
+		}
+	}
+	for k := 0; k < suffix; k++ {
+		d.matches = append(d.matches, [2]int{a1 + k, b1 + k})
+	}
+}
+
+// maxSnakeSteps bounds the edit distance the middle-snake search explores. A
+// region needing more edits than this is a wholesale rewrite, which is shown
+// as one replacement instead of spending quadratic time on it.
+const maxSnakeSteps = 4000
+
+// middleSnake runs Myers' forward and reverse searches until they meet and
+// returns the snake (x,y)-(u,v) on a shortest edit path through a[a0:a1] and
+// b[b0:b1]. Both inputs must be non-empty and share no common prefix or suffix.
+func (d *myersDiff) middleSnake(a0, a1, b0, b1 int) (x, y, u, v int, ok bool) {
+	n, m := a1-a0, b1-b0
+	delta := n - m
+	odd := delta&1 != 0
+	limit := min((n+m+1)/2+1, maxSnakeSteps)
+	offset := limit + 1
+	vf, vb := d.vf[:2*offset+1], d.vb[:2*offset+1]
+	vf[offset+1], vb[offset+1] = 0, 0
+	for dist := 0; dist <= limit; dist++ {
+		for k := -dist; k <= dist; k += 2 {
+			var px int
+			if k == -dist || (k != dist && vf[offset+k-1] < vf[offset+k+1]) {
+				px = vf[offset+k+1]
+			} else {
+				px = vf[offset+k-1] + 1
+			}
+			py := px - k
+			fx, fy := px, py
+			for fx < n && fy < m && d.a[a0+fx] == d.b[b0+fy] {
+				fx++
+				fy++
+			}
+			vf[offset+k] = fx
+			if rk := delta - k; odd && rk >= -(dist-1) && rk <= dist-1 && fx+vb[offset+rk] >= n {
+				return a0 + px, b0 + py, a0 + fx, b0 + fy, true
+			}
+		}
+		for k := -dist; k <= dist; k += 2 {
+			var px int
+			if k == -dist || (k != dist && vb[offset+k-1] < vb[offset+k+1]) {
+				px = vb[offset+k+1]
+			} else {
+				px = vb[offset+k-1] + 1
+			}
+			py := px - k
+			rx, ry := px, py
+			for rx < n && ry < m && d.a[a1-1-rx] == d.b[b1-1-ry] {
+				rx++
+				ry++
+			}
+			vb[offset+k] = rx
+			if fk := delta - k; !odd && fk >= -dist && fk <= dist && rx+vf[offset+fk] >= n {
+				return a0 + n - rx, b0 + m - ry, a0 + n - px, b0 + m - py, true
+			}
+		}
+	}
+	return 0, 0, 0, 0, false
 }
 
 type CompareRow struct {

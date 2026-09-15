@@ -63,6 +63,29 @@ func TestDiffEditsLargeInputKeepsSeparatedMiddleChanges(t *testing.T) {
 	}
 }
 
+func TestDiffEditsLargeInputKeepsScatteredChanges(t *testing.T) {
+	base := make([]string, 4000)
+	for i := range base {
+		base[i] = "line-" + strconv.Itoa(i)
+	}
+	other := slices.Clone(base)
+	for i := 100; i < 4000; i += 150 {
+		other[i] = "changed-" + strconv.Itoa(i)
+	}
+	edits := DiffEdits(base, other)
+	if len(edits) != 26 {
+		t.Fatalf("scattered changes produced %d edits, want 26", len(edits))
+	}
+	for _, edit := range edits {
+		if edit.BaseEnd-edit.BaseStart != 1 || len(edit.NewLines) != 1 {
+			t.Fatalf("scattered change was not a single-line edit: %#v", edit)
+		}
+	}
+	if got := applyEdits(base, edits); !slices.Equal(got, other) {
+		t.Fatal("scattered diff did not reproduce target")
+	}
+}
+
 func TestDiffEditsRandomRoundTrips(t *testing.T) {
 	rng := rand.New(rand.NewSource(42))
 	words := []string{"a", "b", "c", "d", "repeated"}
